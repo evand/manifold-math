@@ -1,0 +1,4 @@
+# Core: proofs + reference library + the GP8 differential anchor test
+numpy
+sympy
+pytest

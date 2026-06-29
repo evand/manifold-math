@@ -1,0 +1,367 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+
+% Algorithm customization
+\algrenewcommand\algorithmicrequire{\textbf{Input:}}
+\algrenewcommand\algorithmicensure{\textbf{Output:}}
+
+\title{Efficient Auto-Arbitrage Algorithms for\\Multi-Outcome Prediction Markets}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Multi-outcome prediction markets require auto-arbitrage to maintain the constraint that probabilities sum to one. Existing implementations use nested binary search, resulting in $O(n \log^2 N)$ complexity. We present three parameterization strategies---dollar-centric, share-centric, and probability-centric---that achieve $O(n \log N)$ complexity by eliminating the inner search layer. For typical precision $\epsilon = 10^{-6}$, this yields $\log N \approx 20\times$ speedup. Our approach is general: it works with any monotonic, computable cost curves (CPMM, log-scored AMMs, or hybrids with limit orders).
+\end{abstract}
+
+\section{Introduction}
+
+Multi-outcome prediction markets with $n$ mutually exclusive outcomes must maintain $\sum_{i=1}^n p_i = 1$. Trading in one outcome disrupts this sum, requiring \emph{auto-arbitrage}: automatic rebalancing to restore the constraint.
+
+Existing implementations use nested binary search: an outer search finds the auto-arbitrage amount, but each iteration requires inverting the cost function (shares $\leftrightarrow$ cost) via another binary search. This yields $O(n \log^2 N)$ complexity where $N \approx 1/\epsilon$ relates to precision.
+
+\textbf{Our contribution.} Direct cost formulas eliminate the inner search, reducing complexity to $O(n \log N)$. We present three parameterization strategies for different use cases: spending a fixed budget, purchasing specific shares, or targeting a final probability.
+
+\section{Parameterization Strategies}
+
+\subsection{The Design Space}
+
+Auto-arbitrage executes a purchase with rebalancing, computing the triple $(s, c, p)$ of shares, cost, and probability. Each parameterization takes one element as input and solves for the others:
+
+\begin{center}
+\begin{tabular}{l|c|l}
+\textbf{Strategy} & \textbf{Function Signature} & \textbf{Use Case} \\
+\hline
+Dollar-centric & $c \to (s, c, p)$ & Spend all available capital \\
+Share-centric & $s \to (s, c, p)$ & Portfolio rebalancing \\
+Probability-centric & $p \to (s, c, p)$ & Limit order execution \\
+\end{tabular}
+\end{center}
+
+These map to a $2 \times 2$ design space: (1) execution order (arb first, or target first), and (2) redemption strategy (NO in others, or NO in all):
+
+\begin{center}
+\begin{tabular}{l|c|c}
+& \textbf{NO in others} & \textbf{NO in all} \\
+& $\eta(n-2)$ cash back & $\eta(n-1)$ cash back \\
+\hline
+\textbf{Arb first, target second} & Dollar-centric & (No clean parameterization) \\
+(target inside search) & Input: cost $c$ & \\
+\hline
+\textbf{Target first, arb second} & Probability-centric & Share-centric \\
+(target outside search) & Input: probability $p$ & Input: shares $s$ \\
+\end{tabular}
+\end{center}
+
+The fourth combination (arb first + NO in all) lacks clean semantics: the target purchase happens inside the search loop with remaining budget, but NO-in-all redemption doesn't provide cash for target purchases. We focus on the three useful parameterizations.
+
+All three achieve $O(n \log N)$ complexity using the same core technique: direct cost evaluation eliminates nested searches.
+
+\subsection{Relationship to Redemption Strategies}
+\label{sec:design}
+
+Multi-outcome markets maintain liquidity pools $(Y_i, N_i)$ for each outcome $i$, where $Y_i$ represents YES share reserves and $N_i$ represents NO share reserves. Traders buy YES shares to bet an outcome occurs, or NO shares to bet it doesn't. A complete set (one YES share in each outcome, or equivalently one NO share in each) always pays out exactly \$1.
+
+Share redemption is central to auto-arbitrage. Holding $\eta$ NO shares in each of $n$ outcomes yields $\eta(n-1)$ guaranteed payout (exactly $n-1$ outcomes lose). This enables two approaches:
+
+\begin{itemize}
+\item \textbf{Redemption 1 (``NO in others''):} Buy $\eta$ NO in $(n-1)$ non-target outcomes. Yields $\eta(n-2)$ cash plus $\eta$ YES in target. Used by share-centric and probability-centric.
+
+\item \textbf{Redemption 2 (``NO in all''):} Buy $\eta$ NO in all $n$ outcomes. Yields $\eta(n-1)$ cash. Used by dollar-centric.
+\end{itemize}
+
+\section{Model}
+
+\subsection{Market Structure}
+
+A market with $n$ outcomes has pools $\{(Y_i, N_i)\}_{i=1}^n$ with probabilities:
+\begin{equation}
+p_i = f(Y_i, N_i), \quad \sum_{i=1}^n p_i = 1
+\end{equation}
+
+Each outcome has cost functions $C^Y(\delta)$ and $C^N(\eta)$ giving the cost to purchase $\delta$ YES shares or $\eta$ NO shares from pool $(Y, N)$. Requirements:
+\begin{itemize}
+\item \textbf{Monotonic}: More shares cost more
+\item \textbf{Computable}: $C^Y(\cdot)$ and $C^N(\cdot)$ evaluable in $O(1)$ time, in closed form or via a bounded constant-iteration solve (see the CPMM example for when each applies)
+\end{itemize}
+
+Examples: CPMM, logarithmic scoring rules, hybrids with limit orders. Our algorithms work with any such curves.
+
+\subsection{CPMM Example}
+\label{sec:cpmm-example}
+
+The constant-product market maker carries a weight $p \in (0,1)$ (the pool weight, distinct from the outcome probabilities $p_i$), with invariant $k = Y^p N^{1-p}$ and probability
+\begin{equation}
+f(Y, N) = \frac{p\,N}{(1-p)\,Y + p\,N},
+\end{equation}
+which reduce to $k = \sqrt{YN}$ and $f = N/(Y+N)$ at $p = \tfrac12$. The two directions of the cost map are \emph{not} symmetric in $p$.\footnote{The claims in this subsection are derived and machine-checked symbolically in the accompanying proof scripts \texttt{tasks/cpmm\_multi\_2/proofs/general\_p\_cost.py} (GP1--GP4).}
+
+\paragraph{Cost-in is closed form for any $p$.} Spending an amount $A$ to buy YES sets $N' = N + A$ and restores the invariant via $Y' = (k / N'^{\,1-p})^{1/p}$, yielding $\delta = A + (Y - Y')$ shares. This is $O(1)$ for \emph{any} $p$---two power evaluations, no equation solving.
+
+\paragraph{Shares-in is closed form only at $p = \tfrac12$.} The inverse---the cost $C^Y(\delta)$ to buy a \emph{given} $\delta$---requires solving $(Y - \delta + C)^p (N + C)^{1-p} = k$ for $C$. At $p = \tfrac12$ this collapses to a quadratic:
+\begin{equation}
+C^Y(\delta) = \frac{\delta - Y - N + \sqrt{(Y + N - \delta)^2 + 4N\delta}}{2},
+\end{equation}
+with the analogous $C^N(\eta)$ for NO. For general $p$ it is transcendental: in log space the relation $p \log(Y - \delta + C) + (1-p)\log(N + C) = \log k$ is a sum of two logarithms with an irrational weight---not Lambert-$W$ form, so no standard special function closes it. Clearing the fractional powers for rational $p = a/b$ leaves a degree-$b$ polynomial in $C$; already at $p = \tfrac15$ that quintic has Galois group $S_5$, so no radical solution exists.
+
+\paragraph{Consequence for the algorithms.} Prefer the cost-in parameterization---the dollar-centric strategy (Algorithm~\ref{alg:dollar-centric}) is naturally cost-in and stays $O(1)$ for all $p$. Where a shares-in evaluation is unavoidable, replace the closed form with a bounded one-dimensional Newton iteration seeded from the $p = \tfrac12$ formula; the map is monotone and convex, so it reaches machine precision in a handful of steps, preserving the $O(n \log N)$ bound up to a small constant.
+
+\section{Three Algorithms}
+\label{sec:algorithms}
+
+\subsection{Option 1: Dollar-Centric}
+
+\textbf{Use case:} Spend exactly a specified cost.
+
+\textbf{Notation:} $\textsc{BinarySearch}(a, b, f)$ finds $x \in [a, b]$ where $f(x) = 0$ via bisection.
+
+\begin{algorithm}[H]
+\caption{Dollar-Centric Purchase}
+\label{alg:dollar-centric}
+\begin{algorithmic}[1]
+\Require Answer $k$, cost $c$, pools $\{(Y_i, N_i)\}_{i=1}^n$
+\Ensure $(s, c, p)$ triple
+\State $\eta \gets \textsc{BinarySearch}(0, \eta_{\max}, \textsc{CheckBudget})$
+\Function{CheckBudget}{$\eta$}
+    \State $c_{\text{arb}} \gets \sum_{i \neq k} C^N(\eta \mid Y_i, N_i)$ \Comment{NO in others only}
+    \State $\text{redemption} \gets \eta \cdot (n-2)$ \Comment{NO in others}
+    \State $c_{\text{net}} \gets c_{\text{arb}} - \text{redemption}$
+    \State $c_{\text{primary}} \gets c - c_{\text{net}}$
+    \State Buy $\delta$ YES in $k$ using $c_{\text{primary}}$, update pools
+    \State \Return $\sum p_i' - 1$ \Comment{Check balance}
+\EndFunction
+\State \Return $(s = \delta + \eta, c, p')$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity:} $O(n \log N)$
+
+\subsection{Option 2: Share-Centric}
+
+\textbf{Use case:} Purchase a specific number of shares.
+
+\textbf{Key insight:} Buy exact shares in target first (outside search). Then search for $\eta$ in all $n$ answers to restore balance.
+
+\begin{algorithm}[H]
+\caption{Share-Centric Purchase}
+\label{alg:share-centric}
+\begin{algorithmic}[1]
+\Require Answer $k$, target shares $s$, pools $\{(Y_i, N_i)\}_{i=1}^n$
+\Ensure $(s, c, p)$ triple
+\State $c_{\text{primary}} \gets C^Y(s \mid Y_k, N_k)$
+\State Buy $s$ YES in $k$, update pool $(Y_k', N_k')$
+\State
+\State $\eta \gets \textsc{BinarySearch}(0, \eta_{\max}, \textsc{CheckBalance})$
+\Function{CheckBalance}{$\eta$}
+    \State $c_{\text{arb}} \gets \sum_{i=1}^n C^N(\eta \mid Y_i', N_i')$ \Comment{NO in all $n$ answers}
+    \State Apply NO purchases, compute $\{p_i'\}$
+    \State \Return $\sum p_i' - 1$
+\EndFunction
+\State $c \gets c_{\text{primary}} + c_{\text{arb}} - \eta(n-1)$ \Comment{Redemption}
+\State \Return $(s, c, p')$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity:} $O(n \log N)$
+
+\subsection{Option 3: Probability-Centric}
+
+\textbf{Use case:} Move target to a specific probability (limit orders).
+
+\textbf{Key insight:} Buy in target to reach $p_{\text{target}}$ first (outside search). Then search for $\eta$ NO in \emph{others only}. Since redemption is pure accounting and doesn't modify target pool, probability stays fixed at $p_{\text{target}}$.
+
+\begin{algorithm}[H]
+\caption{Probability-Centric Purchase}
+\label{alg:prob-centric}
+\begin{algorithmic}[1]
+\Require Answer $k$, probability $p_{\text{target}}$, pools $\{(Y_i, N_i)\}_{i=1}^n$
+\Ensure $(s, c, p)$ triple with $p = p_{\text{target}}$
+\State $\delta \gets \textsc{SharesForProb}(Y_k, N_k, p_{\text{target}})$ \Comment{Invert $p = f(Y, N)$}
+\State $c_{\text{primary}} \gets C^Y(\delta \mid Y_k, N_k)$
+\State Buy $\delta$ YES in $k$, update $(Y_k', N_k')$
+\State Verify $f(Y_k', N_k') = p_{\text{target}}$
+\State
+\State $\eta \gets \textsc{BinarySearch}(0, \eta_{\max}, \textsc{CheckBalance})$
+\Function{CheckBalance}{$\eta$}
+    \State $c_{\text{arb}} \gets \sum_{i \neq k} C^N(\eta \mid Y_i, N_i)$ \Comment{NO in others only}
+    \State Apply NO purchases, compute $\{p_i'\}_{i \neq k}$
+    \State \Return $p_{\text{target}} + \sum_{i \neq k} p_i' - 1$ \Comment{Target fixed}
+\EndFunction
+\State $c \gets c_{\text{primary}} + c_{\text{arb}} - \eta(n-2)$ \Comment{Redemption}
+\State \Return $(s = \delta + \eta, c, p = p_{\text{target}})$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{proposition}[Target Probability Invariance]
+The probability of answer $k$ remains $p_{\text{target}}$ throughout auto-arbitrage and after redemption.
+\end{proposition}
+
+\begin{proof}
+Auto-arbitrage modifies only pools $\{(Y_i, N_i)\}_{i \neq k}$. Since $p_k = f(Y_k', N_k')$ depends only on $(Y_k', N_k')$, which is unchanged, $p_k = p_{\text{target}}$ holds. Redemption is share identity application (pure accounting), not pool modification.
+\end{proof}
+
+\textbf{Complexity:} $O(n \log N)$
+
+\textbf{Application:} Essential for limit orders specified by target probability, enabling efficient partial fills with guaranteed final price.
+
+\section{Comparison to Nested Search}
+
+Existing implementations invert the cost function via nested search:
+
+\begin{algorithm}[H]
+\caption{Nested Search Approach (Existing)}
+\begin{algorithmic}[1]
+\Require Answer $k$, cost $c$, pools
+\State $\eta \gets \textsc{BinarySearch}(0, \eta_{\max}, \textsc{OuterCheck})$ \Comment{$O(\log N)$}
+\Function{OuterCheck}{$\eta$}
+    \State $c_{\text{arb}} \gets \sum_{i \neq k} \textsc{SharesToCost}(\eta, Y_i, N_i)$ \Comment{Each term: $O(\log N)$ search!}
+    \State $c_{\text{primary}} \gets c - (c_{\text{arb}} - \eta(n-2))$
+    \State Buy YES in $k$ with $c_{\text{primary}}$, compute $\{p_i'\}$
+    \State \Return $\sum p_i' - 1$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity:} $O(n \log^2 N)$ — Outer $O(\log N)$ times $(n \times O(\log N))$ inversions.
+
+\textbf{Speedup:} Direct formulas eliminate inner searches:
+\begin{equation}
+\frac{O(n \log^2 N)}{O(n \log N)} = O(\log N) \approx 20\times \text{ for } \epsilon = 10^{-6}
+\end{equation}
+
+Empirically: individual optimizer test cases taking minutes (the
+equivalent-set/exhaustive-fallback snapshot cases run $\sim$250\,s each) collapse to
+well under a second on the closed-form path.
+
+\section{Implementation Notes}
+
+\subsection{Generality}
+
+Our algorithms require only:
+\begin{enumerate}
+\item Cost functions $C^Y(\delta)$ and $C^N(\eta)$ computable in $O(1)$
+\item Probability function $p = f(Y, N)$ computable in $O(1)$
+\item For probability-centric: Invertible $\delta = f^{-1}(p)$ computable in $O(1)$
+\end{enumerate}
+
+This works with CPMM (any weight $p$), logarithmic scoring, or hybrid mechanisms incorporating limit orders. The key is avoiding nested searches for cost/share inversion. For CPMM the cost-in direction is closed form for every $p$, while shares-in is closed form only at $p = \tfrac12$ (Section~\ref{sec:cpmm-example}); away from $\tfrac12$, requirement~1 is met by a bounded Newton inversion rather than a radical formula, which suffices because it still removes the inner \emph{search} layer.
+
+\subsection{Reversibility with limit orders}
+
+The binary searches above bracket their target from both sides, so during convergence an outcome's probability may move up past a price and then back down. Correctness therefore requires the cost map to be \emph{reversible}: $C(\delta) + C(-\delta) = 0$. Pure CPMM satisfies this---the cost is a state function of the pool, so a round trip is exactly zero. Limit order books break it under the obvious implementation, in which crossing a maker order consumes it in place and never restores it (a ratchet). An overshoot probe then consumes makers that the \emph{settled} bet never crosses, and the computed result depends on the search trajectory rather than on the net bet.
+
+It is worth distinguishing two things. A \emph{real} round-trip trade---buy up through some orders, later sell back down through others---crosses different makers each way and is legitimately irreversible: two real trades, real spread paid. That is correct. What must be reversible is only the auto-arbitrage \emph{search's internal trajectory}, since the search computes a single net bet and its result must depend only on the net movement per outcome.
+
+The fix is to leave a \textbf{temporary reverse limit} for the duration of the atomic operation: when a probe crosses (or partially crosses) a maker at price $\rho$, insert an opposite-side order of the consumed size at the same price $\rho$. By price priority a returning probe re-crosses that reverse order first and is refunded exactly what it paid, restoring the maker. This keeps the real limit book live in the search---so every probe is priced with limits included, unlike a pure-CPMM proxy---while making the consumed amount of every maker a pure function of the current price. Taker cash is then a potential $\Phi(p)$ with $C(p_a \to p_b) = \Phi(p_b) - \Phi(p_a)$, so reversibility ($C(\delta)+C(-\delta)=0$) and path-independence of the search are identities rather than approximations. At commit the reverse limits are discarded, leaving exactly the makers crossed by the net movement; on a monotone (non-overshooting) path the procedure is identical to a single direct bet, so it is corrective only on the pathological trajectories it is designed to neutralize.
+
+\subsection{Monotonicity of the multi-buy equilibrium}
+\label{sec:monotonicity}
+
+The reverse-limit construction above neutralizes a \emph{search} that overshoots. A separate and sharper question is whether the \emph{equilibrium itself} moves monotonically with the bet size---because if it does, a correct implementation need never overshoot at all, and the limit-fill semantics are unambiguous (each maker is crossed once, in one direction). This matters for the one auto-arbitrage path that is genuinely non-monotone in its naive form: a \emph{basket buy} of YES across several outcomes, implemented as an iterate--buy--arbitrage--reinvest loop. Such a loop drives a traded outcome's probability up past its settled value and then back down within a single atomic operation, so a resting order in that transient band is consumed on the way up and---under in-place settlement---kept on the way down.
+
+Fix a sum-to-one CPMM market at weight $p = \tfrac12$. A basket buy purchases an equal number $g$ of YES shares in each outcome of a set $B \subsetneq \{1,\dots,n\}$; the auto-arbitrage buys an equal number $\eta$ of NO shares in all $n$ outcomes to restore $\sum_i p_i = 1$ and redeems the $\eta$ complete NO-sets for $\eta(n-1)$. Write $t$ for the net mana spent.
+
+\begin{theorem}[Monotone multi-buy equilibrium]
+\label{thm:monotone}
+For every $t \ge 0$ the equilibrium $(g,\eta)$ exists and is unique, and each outcome probability is monotone in $t$: strictly increasing for $i \in B$ and strictly decreasing for $i \notin B$. Consequently each outcome's price reaches its settled value by a single monotone move---no overshoot.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+The argument rests on one identity. At $p = \tfrac12$ the marginal YES-buy and NO-buy rates on a pool coincide in magnitude:
+\begin{equation}
+a_i \;:=\; \frac{\partial p_i}{\partial(\text{YES share})} \;=\; \frac{2 Y_i N_i}{(Y_i + N_i)^3} \;=\; -\,\frac{\partial p_i}{\partial(\text{NO share})}.
+\end{equation}
+Existence and uniqueness of the arbitrage $\eta$ at fixed $g$ are immediate: buying NO strictly lowers each probability, so $\sum_i p_i(\eta)$ is strictly decreasing, giving a unique root of $\sum_i p_i = 1$ (this part holds for any $p$). Differentiating that balance $F(g,\eta) = \sum_i p_i - 1 = 0$ implicitly, and using $a_i = b_i$, every comparative static signs in closed form:
+\begin{equation}
+\frac{d\eta}{dg} = \frac{\sum_{l \in B} a_l}{\sum_{k} a_k} \in (0,1), \qquad
+\frac{dp_i}{dg} = \begin{cases} a_i \dfrac{\sum_{j \notin B} a_j}{\sum_k a_k} > 0 & i \in B,\\[2ex] -\,a_i \dfrac{\sum_{l \in B} a_l}{\sum_k a_k} < 0 & i \notin B,\end{cases}
+\end{equation}
+with $\sum_{j\notin B} a_j > 0$ because $B$ is a proper subset. Finally the net spend satisfies
+\begin{equation}
+\frac{dt}{dg} = \sum_{i \in B} p_i \;>\; 0,
+\end{equation}
+the $\eta(n-1)$ redemption exactly cancelling the arbitrage's marginal cost (this is precisely the ``yes share price sum'' that existing implementations divide by). So $t$ is strictly increasing in $g$, the map is invertible, and each $p_i$ inherits strict monotonicity in $t$.
+\end{proof}
+
+The payoff is for limit orders. By Theorem~\ref{thm:monotone} the settled price path of every outcome is monotone, so each resting maker is crossed exactly once, in one direction. The ordinary single-move limit fill---which already pins correctly, a price resting \emph{at} a large order---therefore gives the right answer; the transient overshoot of the iterate-reinvest loop is a provable algorithm \emph{artifact}, not a property of the equilibrium. A direct monotone solve and the reverse-limit settlement of the previous subsection both realize this same unique equilibrium, so the choice between them is one of implementation, not correctness.\footnote{Stated and machine-checked---symbolically for the marginal identity and comparative statics, numerically for the equilibrium solve and the limit-fill behavior---in \texttt{tasks/cpmm\_multi\_2/proofs/monotone\_equilibrium.py} (GP12), against a faithful reconstruction of the vendor basket-buy loop. The marginal symmetry $a_i = b_i$ is special to $p = \tfrac12$; the non-basket and basket-sum monotonicity and the single-crossing limit argument carry to any $p$, and the individual-basket case for general $p$ is numerically confirmed with formalization pending.}
+
+\subsection{Multi-target redemption and conservation}
+\label{sec:multitarget}
+
+The redemption identities of \S\ref{sec:design} (``Relationship to Redemption Strategies'') were stated for a \emph{single} target: ``NO in others'' buys $\eta$ NO in the $n-1$ non-target outcomes and credits $\eta(n-2)$ cash plus \emph{$\eta$ YES in the target}. A basket buy bets YES on a set $B$ with $|B| = m \ge 2$ outcomes at once, and the credit must be distributed across the $m$ targets. This generalization is not innocuous: the wrong split silently destroys mana at resolution.
+
+Take the ``NO in others'' decomposition for a basket: buy an equal $g$ YES in each $i \in B$ and an equal $\eta$ NO in each of the $n-m$ non-basket outcomes. The held NO bundle $\{\eta \text{ NO in each non-basket outcome}\}$ pays $\eta(n-m)$ when a basket outcome wins and $\eta(n-m-1)$ when a non-basket outcome wins. Its guaranteed floor $\eta(n-m-1)$ is redeemed for cash (the $m=1$ case recovers $\eta(n-2)$). The \emph{residual}---value beyond the floor---pays $\eta$ exactly when some basket outcome wins, and $0$ otherwise. Expressed as YES shares $s_i$ on the basket outcomes, a claim that pays $\eta$ for \emph{whichever} $i \in B$ wins requires $s_i = \eta$ for every $i \in B$ (only the winning outcome's YES shares pay). The naive even split $s_i = \eta/m$ pays a winning basket outcome only $\eta/m$.
+
+\begin{theorem}[Basket redemption credit]
+\label{thm:basket-redemption}
+In a sum-to-one market, resolution conserves value---total payout independent of which outcome wins---if and only if $D_i := T_i^{\mathrm{YES}} - T_i^{\mathrm{NO}}$ is constant across outcomes, where $T_i^{\mathrm{YES}} = Y_i + (\text{trader YES shares in } i)$ and $T_i^{\mathrm{NO}} = N_i + (\text{trader NO shares in } i)$. A basket buy preserves this invariant if and only if each basket outcome is credited $\eta$ YES shares (not $\eta/m$). The condition is independent of the pool weights $p_i$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Resolution to winner $W$ pays $T_W^{\mathrm{YES}} + \sum_{j \ne W} T_j^{\mathrm{NO}}$ (the winner's YES claims plus every other outcome's NO claims, pools and trader shares alike). This is constant in $W$ iff $T_i^{\mathrm{YES}} - T_i^{\mathrm{NO}}$ is constant in $i$. A CPMM buy moves $Y_i - N_i$ by exactly $-s$ for a YES purchase of $s$ shares and $+s$ for a NO purchase (the share mechanic $Y' = Y + b - s$, $N' = N + b$ gives $\Delta(Y-N) = -s$; symmetrically for NO; no dependence on $p$ or amount $b$). For a basket outcome credited $c$ YES shares, $\Delta D_i = (-g) + (g + c) = c$; for a non-basket outcome with its NO shares redeemed away, $\Delta D_j = +\eta$. The pre-bet $D$ is uniform (the sum-to-one funding identity), so it stays uniform iff $c = \eta$.
+\end{proof}
+
+For $m = 1$, $\eta/m = \eta$, so the single-target algorithms of \S\ref{sec:algorithms} were always correct; the defect is specific to genuine multi-target baskets and to resolution \emph{onto a basket outcome} (resolving to a non-basket outcome conserves regardless, which is why it can hide).\footnote{This was a live bug in a \texttt{cpmm-multi-2} implementation that split the credit $\eta/m$; it destroyed ${\sim}10\%$ of the stake at resolution to a basket outcome and was caught only by an end-to-end conservation test on a running instance (a v1 market on the identical bet conserved). Stated and machine-checked---symbolically for the pool mechanic, the residual decomposition, and the conservation argument; numerically end-to-end for the leak and its fix---in \texttt{tasks/cpmm\_multi\_2/proofs/multi\_target\_redemption.py} (GP16).}
+
+\subsection{Convergence}
+
+Binary search typically converges in 18--24 iterations for tolerance $\epsilon = 10^{-6}$. Each iteration evaluates direct formulas on $O(n)$ answers, totaling $\sim 400n$ arithmetic operations for typical $n = 10$.
+
+\section{Pool Initialization under General Weights}
+\label{sec:creation-liquidity}
+
+Freeing the per-answer weight does more than allow non-uniform starting probabilities; it opens a design choice at \emph{market creation}. A sum-to-one market is funded by an ante budget $\mathcal{A}$, and the creator must place $n$ pools $\{(Y_i, N_i, w_i)\}$ that (i) read off the target probabilities $p_i$, (ii) never let the house lose money, and (iii) are as \emph{liquid} as possible. The legacy uniform construction pins $w_i = \tfrac12$ and is forced to an asymmetric pool; with a free $w_i$ the question becomes a genuine optimization. This section settles the right liquidity metric, the funding constraint, and the optimal allocation.\footnote{Derived and machine-checked in \texttt{tasks/cpmm\_multi\_2/proofs/creation\_liquidity\_proofs.py} (GP13--GP15, symbolic) with numerical companions \texttt{creation\_liquidity\{,\_optimum,\_solver\}.py}.}
+
+\subsection{The right liquidity metric}
+
+For one pool $(Y, N)$ with weight $w$ and probability $\rho = w N / ((1-w)Y + wN)$, the marginal price impact of a trade---differential probability movement per share---has the closed form
+\begin{equation}
+a \;\equiv\; \frac{d\rho}{d\delta} \;=\; \frac{w(1-w)\,Y N}{W^{3}} \;=\; \frac{\rho(1-\rho)}{W}, \qquad W \;\equiv\; (1-w)Y + wN,
+\label{eq:point-liquidity}
+\end{equation}
+reducing to the symmetric $a = 2YN/(Y+N)^3$ at $w = \tfrac12$. Crucially $a$ is measured \emph{per share}, not per unit of currency: in shares the impact is invariant under the swap $(Y,N,w)\mapsto(N,Y,1-w)$ (buying YES and buying NO are equally easy), whereas the per-currency impact is not, since the marginal prices of a YES and a NO share are $\rho$ and $1-\rho$. Eliminating $w$ at fixed probability gives $a = \rho(1-\rho)(\rho Y + (1-\rho)N)/(YN)$. The immediate consequence: \textbf{at a fixed probability, maximizing liquidity is exactly maximizing $W = (1-w)Y + wN$.} This corrects the stored ``liquidity'' $\sqrt{YN}$, which is the wrong yardstick once $w \neq \tfrac12$.
+
+Under the basket auto-arbitrage, a single-answer YES buy is partly absorbed by the $\eta$ complete-set-of-NO redemption that restores $\sum_i p_i = 1$. The effective slope is again closed form,
+\begin{equation}
+a_i^{\mathrm{eff}} \;=\; a_i\,\frac{\sum_j a_j - a_i}{\sum_j a_j},
+\label{eq:eff-liquidity}
+\end{equation}
+which is monotone in $a_i$; optimizing the creation pools against $a^{\mathrm{eff}}$ rather than $a$ moves the optimum by only one to three percentage points, so the pre-arbitrage metric \eqref{eq:point-liquidity} is a faithful proxy.
+
+\subsection{Funding and the optimal allocation}
+
+Exactly one outcome resolves YES, so if outcome $k$ wins the house pays $Y_k + \sum_{j\neq k} N_j$. No-house-loss requires this to not exceed the ante for every $k$. At the liquidity optimum every such scenario binds, which forces
+\begin{equation}
+Y_i - N_i \;=\; D \quad\text{(constant in } i\text{)}, \qquad D + \textstyle\sum_i N_i = \mathcal{A}.
+\label{eq:all-tight}
+\end{equation}
+Substituting \eqref{eq:all-tight} turns the design into an \emph{unconstrained} minimization of $\sum_i a_i$ over the NO-reserves $\{N_i\}$ (with $D = \mathcal{A} - \sum_i N_i$), which is well behaved and solved by a small Newton step. The balanced pool $Y_i = N_i$ is \emph{not} optimal except at uniform: the optimum is asymmetric---deeper on each answer's cheaper side, with $w_i$ pushed off $p_i$---and is $11\%$ more liquid at $n=3$, rising past $50\%$ at $n=6$.
+
+A clean closed form recovers almost all of this gain. Minimizing $\sum_i \rho_i(1-\rho_i)/W_i$ subject to a budget on $\sum_i W_i$ gives, by Cauchy--Schwarz, $W_i \propto \sqrt{\rho_i(1-\rho_i)}$. Since $\rho_i(1-\rho_i)$ is the variance of the outcome's Bernoulli indicator, this is the familiar rule
+\begin{equation}
+\boxed{\;\text{allocate pool depth } W_i \;\propto\; \sqrt{\rho_i(1-\rho_i)}\;}
+\end{equation}
+---depth proportional to the outcome's standard deviation. Across configurations it captures $95.5$--$99.7\%$ of the balanced-to-optimal liquidity gain, so it is usable directly or as a seed for the exact solve.
+
+\subsection{Independent (non-sum-to-one) markets}
+
+When the answers do not sum to one, each is a standalone CPMM funded by its own share of the ante, and the binding budget is the per-answer maximum loss $\max(Y_i, N_i)$. At fixed maximum loss the liquidity-optimal shape is the \emph{balanced} pool $Y_i = N_i$ with $w_i = p_i$---precisely the binary-market construction. Independent multi-answer markets should therefore initialize each answer exactly as a binary CPMM does; the asymmetric optimum above is specific to the shared-funding structure of sum-to-one markets.
+
+\section{Conclusion}
+
+We presented three $O(n \log N)$ parameterization strategies for multi-outcome market auto-arbitrage, achieving $\sim 20\times$ speedup over nested $O(n \log^2 N)$ approaches. The key insight: direct cost formulas eliminate inner binary searches. Our approach is general, working with any smooth monotonic cost curves.
+
+The probability-centric strategy is particularly valuable for limit orders, guaranteeing exact final probability for efficient partial fills. All three strategies are production-ready and validated through extensive testing.
+
+\end{document}
