@@ -19,6 +19,7 @@ the evidence behind every claim.
 | Path | What |
 |---|---|
 | [`rationale.md`](rationale.md) | The upstream pitch + evidence map. Read this first. |
+| [`figures/`](figures/README.md) | The evidence, drawn — asserting figure scripts + SVG/PNG (creator cost, slippage, liquidity burn, Other-split damage). Embedded throughout `rationale.md`. |
 | [`paper/`](paper/) | `auto-arb-algorithms.pdf` (+ TeX source) — derives the three direct-formula auto-arb algorithms and the general-`p` cost core. |
 | [`proofs/`](proofs/) | 16 standalone scripts (sympy + numpy) proving GP1–GP19. Index + status in [`proofs/theorems_summary.md`](proofs/theorems_summary.md). |
 | [`reference/manifold/`](reference/manifold/) | The Python reference implementation (`closed_form_arb.py` + the AMM core it needs) — the executable oracle the TypeScript port is checked against. |
