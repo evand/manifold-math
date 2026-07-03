@@ -20,7 +20,7 @@ the evidence behind every claim.
 |---|---|
 | [`rationale.md`](rationale.md) | The upstream pitch + evidence map. Read this first. |
 | [`paper/`](paper/) | `auto-arb-algorithms.pdf` (+ TeX source) — derives the three direct-formula auto-arb algorithms and the general-`p` cost core. |
-| [`proofs/`](proofs/) | 15 standalone scripts (sympy + numpy) proving GP1–GP18. Index + status in [`proofs/theorems_summary.md`](proofs/theorems_summary.md). |
+| [`proofs/`](proofs/) | 16 standalone scripts (sympy + numpy) proving GP1–GP19. Index + status in [`proofs/theorems_summary.md`](proofs/theorems_summary.md). |
 | [`reference/manifold/`](reference/manifold/) | The Python reference implementation (`closed_form_arb.py` + the AMM core it needs) — the executable oracle the TypeScript port is checked against. |
 | [`tests/`](tests/) | The GP8 differential anchor: the reference path reproduces Manifold's own solver **and a real captured Manifold bet** (`data/test_fixtures/`) to ~`1e-13`. |
 | [`repro/`](repro/) | Live-instance reproducibility extras (advanced) — a lifecycle harness and the v1-liquidity-defect probes. Need a local Manifold instance / API access. |

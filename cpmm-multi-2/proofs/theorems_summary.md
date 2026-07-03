@@ -330,3 +330,68 @@ refinement-invariance + conservation framing. **Implemented + instance-validated
 *Running the proofs:* `creation_liquidity_proofs.py` needs `sympy`; the numerical companions need
 `numpy`/`scipy` (plus the project `manifold` package for the auto-arb oracle).
 `multi_target_redemption.py` needs `sympy` + `scipy`.
+## GP19 — sanity closure (`sanity_closure.py`) ✅ (symbolic + numerical, verified)
+**"If a market starts sane, it stays sane" — with the exact domain conditions.** Sane = every
+answer has poolYes > 0, poolNo > 0, p ∈ (0,1). Motivated by a real hole (found **2026-07-01,
+external code review of PR 3934**): GP15's √variance creation (`cpmmMulti2SumToOnePools`,
+calculate-cpmm.ts:847-878) produces **negative poolYes and p outside (0,1)** for skewed
+many-answer prob vectors — ante=1000, n=30, q=[0.90, 29×0.1/29] gives D=−171.7 and
+poolYes=−170.2 on every longshot. The GP15 sympy proof had assumed positivity via
+`symbols(..., positive=True)` and the numerics sampled only n∈{3..6}; neither saw it.
+- **GP19a (creation feasibility lemma)** — the construction is homogeneous deg-1 in ante
+  (symbolic) ⇒ feasibility depends only on (q, n). `poolNo_i > 0` **always** (nonneg quadratic
+  root, n≥2); the sole failure mode is poolYes, and (given N>0, q∈(0,1)) p∈(0,1) ⟺ Y>0 ⇒
+  **sane ⟺ D > −minᵢNᵢ ⟺ Σⱼ Nⱼ(q,1) − minᵢ Nᵢ(q,1) < 1** — an exact algebraic characterization
+  (0 mismatches / 4000 fuzzed q). Boundary numerically mapped (rest-uniform family, dominant
+  prob q_max(n)): **n≤20 feasible for ALL q**; boundary first appears at **n=21**; then
+  q_max = **0.586 (n=30), 0.323 (n=50), 0.157 (n=100)**. Shape-dependent: two-big-answers
+  breaks at combined mass 0.851/0.445/0.157 (n=10/30/100); geometric decay breaks n=10 already
+  at ratio r < 0.563. The exact test is the characterization, not any single family.
+- **GP19b (trading closure, UNCONDITIONAL)** — buys/sells move along `Y^p N^(1−p) = k` with
+  k>0: newN = N+A > 0 and newY = (k/newN^(1−p))^(1/p) > 0 for **any** spend and any p∈(0,1)
+  (symbolic; sells are the GP4 convention-A reverse = GP9 buy-opposite), and trades never touch
+  p. The market-order prob clamp [0.01, 0.99] (implicit limit at MIN/MAX_CPMM_PROB,
+  calculate-cpmm.ts:250-257 / new-bet.ts:121 / contract.ts:518-519) bounds distance from the
+  boundary: ρ = N/Y = ((1−p)/p)·odds is pinned by prob, so Y = kρ^(p−1), N = kρ^p give explicit
+  reserve floors. Fuzz (24 states × 3 ops, n up to 100, reserves 1e-3..1e3+, dominant probs,
+  p∈[0.02,0.98], clamp-capped taker fills, general-p auto-arb after every op): reserves > 0
+  always, p untouched, worst |Σq−1| after arb **5.6e-16**. **Float64 caveat found while
+  proving:** at extreme p (~1e-9) the closed form *underflows newY to exactly 0.0* (vendor
+  float64 shares this) — a representability failure, not a math one; guards should also keep
+  p away from {0,1}.
+- **GP19c (whole-market add: the CONDITIONAL closure — the headline)** — the add
+  (calculate-cpmm.ts:897-932) merges Δ = create(q_current, A). (i) **ΔNᵢ ≥ 0 always**; only ΔYᵢ
+  can go negative, **exactly when q is creation-infeasible** (2000-case equivalence fuzz, both
+  branches exercised). (ii) A sane *traded* market can sit at infeasible q, and then the add has
+  a **critical amount A\*(state) = min_{i: dYᵢ<0} Yᵢ/|dYᵢ(q, ante=1)|**: add(0.999·A\*) is sane
+  with every prob preserved; add(1.001·A\*) drives merged poolYes < 0 ⇒ p ∉ (0,1). (iii)
+  Homogeneity ⇒ the bound is on **TOTAL added liquidity, independent of drip size**: a 100-tick
+  drizzle equals the lump reservewise (rel 1e-7) and breaching drizzles (7 or 100 ticks) break
+  at exactly the tick where cumulative > A\*. Drizzle does not evade the bound. (iv) Corollary:
+  feasible q ⇒ all dYᵢ > 0 ⇒ **A\* = ∞** (add(1e9) sane) — closure is unconditional exactly on
+  the GP19a feasible set.
+- **GP19d (Other-split closure)** — the GP18 construction (create-answer-cpmm.ts:472-508) is
+  sane per split whenever probOther ∈ (0,1) and answerCost > 0 (pools (Yo+a, a) positive; GP6a
+  weight ∈ (0,1); both children at exactly probOther/2 — symbolic). But the split **halves
+  probOther geometrically**: strict sanity never breaks, yet from Other=50% the market survives
+  exactly **5 splits** before split 6 lands both children at 0.0078 < MIN_CPMM_PROB = 0.01
+  (below the market-order clamp). **Precondition: probOther ≥ 2·MIN_CPMM_PROB** (equivalently
+  ≤ floor(log₂(probOther/MIN_CPMM_PROB)) splits from a fresh Other).
+- **GP19e (per-answer add + conversion)** — `addCpmmLiquidity`'s floated p **is** the GP6a
+  weight of the grown pool (symbolic identity vs calculate-cpmm.ts:753-755) ⇒ p ∈ (0,1) and
+  prob exactly preserved for any positive reserves — GP17b's hypothesis made explicit.
+  v1→v2 conversion is the identity embedding (same pools, p = 0.5): sane→sane trivially.
+- **Preconditions discipline.** The GP15 hole happened because a closed form was promoted to
+  code without promoting its domain condition. Rule: **every closed form promoted to code gets
+  its domain condition promoted to a theorem or a runtime check.** GP19 implies three runtime
+  guards: (1) **creation feasibility check** — reject/renormalize q with
+  ΣN(q,1) − minN(q,1) ≥ 1 at market creation (GP19a); (2) **add A\* guard** — cap a
+  whole-market add (and drizzle, which accumulates to the same bound) at TOTAL < A\*(state),
+  or fall back to equal-split when current q is infeasible (GP19c); (3) **split floor** —
+  require probOther ≥ 2·MIN_CPMM_PROB before an Other-split (GP19d).
+
+*Running the proofs:* `creation_liquidity_proofs.py` needs `sympy`; the numerical companions need
+`numpy`/`scipy` (plus the project `manifold` package for the auto-arb oracle).
+`multi_target_redemption.py` needs `sympy` + `scipy`. `sanity_closure.py` needs `sympy` + `numpy`
+only (self-contained vendor ports, no project imports).
+
