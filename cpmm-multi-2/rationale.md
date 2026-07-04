@@ -134,6 +134,17 @@ M807 of M1,000 in EV. v2's float-p add is identically lossless everywhere:
 
 ![v1 liquidity-add losses](figures/fig_liquidity_add_burn.png)
 
+**And what survives lands in the wrong pools.** Valuing each pool's reserve delta at market
+prices: at a 90% favorite, only M96 of a v1 M1,000 add reaches the favorite's pool (the M807
+above is destroyed outright) — and even in the "safe-looking" direction, a market with one
+*ruled-out* answer still burns M140. v2's whole-market add (the √variance merge, GP17 —
+creation's own allocation rule applied to the added mana) is lossless everywhere and
+self-allocating: each pool's share tracks its probability, so a ruled-out answer attracts
+~nothing (M2 of M1,000 at q = 0.5%). Subsidizing a market with a dead answer is, in value
+terms, subsidizing the live answers — LPs don't need to think about it:
+
+![where a whole-market liquidity add lands](figures/fig_liquidity_add_split.png)
+
 ---
 
 ## The key design realization

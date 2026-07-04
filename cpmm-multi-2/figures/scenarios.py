@@ -196,14 +196,18 @@ def v1_sum_to_one_add(
     fraction is a pure function of the probability profile (adds preserve
     probability, and the map is homogeneous in the remaining amount).
 
-    Returns discarded YES shares per answer, their EV at the profile, and the
-    per-resolution realized loss (discarded[j] materializes iff answer j wins).
+    Returns discarded YES shares per answer, their EV at the profile, the
+    per-resolution realized loss (discarded[j] materializes iff answer j wins),
+    and the reserve deltas (dY_i, dN_i) the add left in each pool. Both the
+    deltas and the discard are pure functions of (probs, amount) — each round's
+    split depends only on the (preserved) probabilities, not on pool depth.
     """
     n = len(probs)
     pools = [[y, no] for (y, no, _p) in v1_uniform_pools(ante, n)]
     # reprice the uniform pools to the target profile shape at p = 0.5:
     # scale each answer's NO reserve so N/(Y+N) = q_i (prob preserved by adds).
     pools = [[y, y * q / (1 - q)] for (y, _), q in zip(pools, probs)]
+    pools_before = [list(pl) for pl in pools]
 
     discarded = [0.0] * n
     remaining = amount
@@ -233,6 +237,14 @@ def v1_sum_to_one_add(
     for (y, no), q in zip(pools, probs):
         assert abs(no / (y + no) - q) < 1e-7
     ev_loss = sum(d * q for d, q in zip(discarded, probs))
+    deltas = [
+        (after[0] - before[0], after[1] - before[1])
+        for after, before in zip(pools, pools_before)
+    ]
+    # EV of the reserves the add left in pool i, at the profile's prices —
+    # q·dY + (1−q)·dN.  Conservation: landed EV + discarded EV == amount.
+    landed = [q * dy + (1 - q) * dn for (dy, dn), q in zip(deltas, probs)]
+    assert abs(sum(landed) + ev_loss - amount) < 1e-6 * max(1.0, amount)
     return {
         "discarded_by_answer": discarded,
         "ev_loss": ev_loss,
@@ -240,7 +252,30 @@ def v1_sum_to_one_add(
         "min_loss": min(discarded),
         "max_loss": max(discarded),
         "rounds": rounds,
+        "reserve_deltas": deltas,
+        "landed_ev_by_answer": landed,
     }
+
+
+# --------------------------------------------------------------------------- #
+# v2 whole-market liquidity add (√variance MERGE, GP17 — vendor
+# addCpmmMultiLiquidityAnswersSumToOneV2): merge a Δ-ante creation computed at
+# the current probs into the existing reserves, re-price each p to hold prob.
+# --------------------------------------------------------------------------- #
+def v2_merge_landed(probs: list[float], amount: float) -> dict:
+    """Per-answer EV of the reserves a v2 √variance merge add leaves in each pool.
+
+    The merge's reserve deltas ARE cpmmMulti2SumToOnePools(probs, amount)
+    (GP17a homogeneity), independent of the existing pool depth; re-pricing p
+    moves no reserves. Valued at the profile's prices, q·dY + (1−q)·dN, the
+    per-answer EVs sum to exactly `amount` (GP17c all-winners-tight identity) —
+    the add is lossless, so there is no discarded term.
+    """
+    delta = v2_sum_to_one_pools(probs, amount)
+    landed = [q * dy + (1 - q) * dn for (dy, dn, _p), q in zip(delta, probs)]
+    assert abs(sum(landed) - amount) < 1e-6 * max(1.0, amount)
+    return {"reserve_deltas": [(dy, dn) for dy, dn, _p in delta],
+            "landed_ev_by_answer": landed}
 
 
 # --------------------------------------------------------------------------- #
@@ -275,7 +310,7 @@ def _main() -> None:
     print(f"  cash outlay        M{r['outlay']:10,.1f}")
     print("  YES shares held:   "
           + ", ".join(f"a{i}={r['shares'][f'a{i}']:,.0f}" for i in range(n)))
-    print(f"  final cost if answer i wins: "
+    print("  final cost if answer i wins: "
           + ", ".join(f"a{i}=M{r['final_cost_by_winner'][f'a{i}']:,.0f}" for i in range(n)))
     print(f"  final cost range   [M{r['final_min']:,.1f}, M{r['final_max']:,.1f}]")
 

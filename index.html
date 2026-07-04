@@ -75,6 +75,15 @@ but is lossless <em>only</em> at the exactly-uniform profile — for n&nbsp;&gt;
 v2's float-p add is identically lossless everywhere.</p>
 <p class="links"><a href="https://github.com/evand/manifold-math/blob/main/cpmm-multi-2/figures/fig_liquidity_add_burn.py">script</a></p>
 
+<div class="figwrap" style="margin-top:1rem"><img src="cpmm-multi-2/figures/fig_liquidity_add_split.png"
+  alt="Where a whole-market liquidity add lands, pool by pool"></div>
+<p class="caption">And where the surviving value lands, pool by pool (reserve deltas valued at market prices):
+v1's landed mix is distorted <em>and</em> burned — at a 90% favorite its pool receives M96 of M1,000 (M807
+destroyed), and even one <em>ruled-out</em> answer still burns M140. v2's √variance merge allocates ≈ in
+proportion to probability with everything landing: a ruled-out answer takes M2 of M1,000 — adding to a market
+with a dead answer is, in value terms, adding to the (n−1)-answer market.</p>
+<p class="links"><a href="https://github.com/evand/manifold-math/blob/main/cpmm-multi-2/figures/fig_liquidity_add_split.py">script</a></p>
+
 <h2 id="split">Splitting a new answer out of “Other”</h2>
 <div class="figwrap"><img src="cpmm-multi-2/figures/fig_other_split.png"
   alt="Other-split bystander effect, dumbbell chart"></div>

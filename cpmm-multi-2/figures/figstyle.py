@@ -10,7 +10,6 @@ adjacent DeltaE 24.2; blue clears 3:1 on the light surface).
 from __future__ import annotations
 
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 
 # -- entities ---------------------------------------------------------------
 V1 = "#6b6a66"  # cpmm-multi-1 — neutral warm gray (baseline)
