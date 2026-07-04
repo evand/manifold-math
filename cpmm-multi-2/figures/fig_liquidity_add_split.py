@@ -8,17 +8,31 @@ has been ruled out, am I wasting liquidity by subsidizing the whole market?"
 
 Setup: n = 5 sum-to-one market, one featured answer at probability q, the
 others splitting the remainder equally. An M1,000 whole-market add. Every
-reserve delta is valued at the market's own prices (q·ΔY + (1−q)·ΔN per
-answer) — a decomposition that sums to exactly M1,000 for v2 (GP17c) and to
-M1,000 minus the discarded EV for v1, so the two panels share one accounting.
-Both policies' deltas are pure functions of the profile (independent of pool
-depth), so there is no ante caveat.
+reserve delta is valued IN EXPECTATION at the add-time prices (q·ΔY +
+(1−q)·ΔN per answer) — a decomposition that sums to exactly M1,000 for v2
+(GP17c) and to M1,000 minus the discarded EV for v1, so the two panels share
+one accounting. "Destroyed" is likewise the discarded shares' EV at those
+prices; the REALIZED loss depends on which answer wins (everything-or-nothing
+by resolution — the realized range is fig_liquidity_add_burn's band, e.g.
+[M0, M897] at a 90% favorite). v2's zero is stronger than an EV statement:
+the merge contributes exactly Δ to EVERY resolution (GP17c all-winners-tight),
+so "nothing destroyed" holds outcome-by-outcome. Both policies' deltas are
+pure functions of the profile (independent of pool depth), so there is no
+ante caveat.
+
+"RULED OUT" here means an answer the market has traded down to q = 0.5%.
+There is no hard floor: direct bets on an answer clamp at MIN_CPMM_PROB = 1%
+(vendor common/src/contract.ts), but selling shares or buying the OTHER
+answers pushes it lower — genuinely dead answers commonly sit at 0.1%–0.5%
+on production markets. The sweep starts at 0.1%; headline numbers are quoted
+at 0.5%, and they only shrink toward the bottom of that band (v2 parks
+under M1 at q = 0.1%).
 
 LEFT — v1 (`addCpmmMultiLiquidityAnswersSumToOne`): equal per-answer rounds
 with partial recycling. The landed mix is distorted toward the longshots and
 the rest is destroyed outright — at a 90% favorite only M96 of M1,000 reaches
 the favorite's pool while M807 is discarded; even with a RULED-OUT answer
-(q → 0, the "safe-looking" direction) M140 burns.
+(the "safe-looking" direction) M140 burns.
 
 RIGHT — v2 (√variance merge, GP17): everything lands, and the allocation
 tracks probability — the featured pool's share ≈ q. A ruled-out answer
@@ -44,12 +58,18 @@ import scenarios as sc
 
 N = 5
 ADD = 1000.0
-Q_DEAD = 0.005  # the "ruled out" featured probability
+# "Ruled out" = traded down to 0.5% — the upper end of where genuinely dead
+# answers sit on production markets (0.1%–0.5%; direct bets clamp at
+# MIN_CPMM_PROB = 1% but sells / buying other answers go below it).
+Q_DEAD = 0.005
+Q_LO = 0.001  # sweep from the bottom of the observed dead-answer band
 
 
 def mix_curves():
     """Sweep featured q; return per-policy (featured, per-other, waste) shares."""
-    qs = np.linspace(Q_DEAD, 0.95, 190)
+    # linspace(Q_DEAD, ...) puts Q_DEAD and the uniform point 1/N exactly on
+    # the grid (the asserts hit them via interp); prepend Q_LO for the sweep.
+    qs = np.concatenate([[Q_LO], np.linspace(Q_DEAD, 0.95, 190)])
     v1_feat, v1_other, v1_waste = [], [], []
     v2_feat, v2_other = [], []
     for q in qs:
@@ -94,19 +114,23 @@ def main() -> None:
     assert abs(at(v1w, 0.9) - 0.807) < 2e-3           # matches fig_liquidity_add_burn
     assert at(v1w, 1 / N) < 1e-6                      # uniform profile: v1 lossless
     assert abs(at(v1f, 1 / N) - 1 / N) < 1e-6 and abs(at(v2f, 1 / N) - 1 / N) < 1e-6
-    assert v2f[0] < 0.003 and v1w[0] > 0.13           # ruled-out edge: v2 ~0, v1 burns
+    # ruled-out band: v2 parks ~M2 at the quoted q = 0.5%, under M1 at 0.1%;
+    # v1 burns >M130 across the whole band
+    assert at(v2f, Q_DEAD) * ADD < 3.0 and at(v2f, Q_LO) * ADD < 1.0
+    assert at(v1w, Q_DEAD) > 0.13 and at(v1w, Q_LO) > 0.13
     assert np.max(np.abs(v2f - qs)) < 0.025           # v2 featured share tracks ≈ q
     # ruled-out ⇒ ≈ the (n−1)-answer market: each live pool gets ≈ 1/(n−1)
-    assert abs(v2o[0] - 1 / (N - 1)) < 0.002
+    assert abs(at(v2o, Q_DEAD) - 1 / (N - 1)) < 0.002
 
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(10.6, 4.6), sharey=True)
 
     # ---------------- left: v1 ----------------
     stack(axl, qs, v1f, v1o, st.V1, waste=v1w)
-    axl.annotate("destroyed", xy=(0.66, 0.80), color=st.V1,
-                 fontsize=11, fontweight="bold", ha="center",
+    axl.annotate("destroyed\n(in expectation — realized\nis outcome-dependent)",
+                 xy=(0.66, 0.80), color=st.V1,
+                 fontsize=10, fontweight="bold", ha="center", va="center",
                  bbox=dict(boxstyle="round,pad=0.25", fc=st.SURFACE, ec="none"))
-    axl.annotate(f"ruled-out answer:\nstill burns M{at(v1w, Q_DEAD) * ADD:.0f}",
+    axl.annotate(f"ruled-out answer (q = 0.5%):\nstill burns M{at(v1w, Q_DEAD) * ADD:.0f}",
                  xy=(0.02, 0.93), xytext=(0.07, 0.70), va="top", **st.ANNOT_KW,
                  arrowprops=dict(arrowstyle="-", color=st.INK_2, lw=0.8))
     axl.annotate(f"favorite at 90%: its pool\ngets M{at(v1f, 0.9) * ADD:.0f} of M1,000",
@@ -127,12 +151,13 @@ def main() -> None:
                  ha="center", va="center", rotation=36)
     axr.annotate("other pools", xy=(0.36, 0.76), color=st.INK, fontsize=9.5,
                  ha="center")
-    axr.annotate(f"ruled-out answer gets M{at(v2f, Q_DEAD) * ADD:.0f}\n"
-                 "of M1,000 — like adding to\nthe 4-answer market",
+    axr.annotate(f"ruled-out answer (q = 0.5%) gets\nM{at(v2f, Q_DEAD) * ADD:.0f} "
+                 "of M1,000 — like adding\nto the 4-answer market",
                  xy=(0.015, 0.03), xytext=(0.05, 0.50), va="top",
                  **st.ANNOT_KW,
                  arrowprops=dict(arrowstyle="-", color=st.INK_2, lw=0.8))
-    axr.annotate("everything lands — nothing destroyed,\nat every profile",
+    axr.annotate("everything lands — nothing destroyed, at every\nprofile "
+                 "(and in every resolution, not just EV)",
                  xy=(0.93, 0.965), ha="right", va="top", color=st.V2,
                  fontsize=9, fontweight="bold")
     axr.set_title("v2 — √variance merge (GP17)\n(allocation tracks probability)",
@@ -149,7 +174,7 @@ def main() -> None:
         ax.set_xlabel("featured answer's probability q (others equal)")
         ax.grid(False)
     st.pct(axl, "y")
-    axl.set_ylabel("share of the M1,000 add, at market prices")
+    axl.set_ylabel("share of the M1,000 add (EV at add-time prices)")
 
     fig.suptitle("Where a whole-market M1,000 liquidity add lands (n = 5) — "
                  "v2 self-allocates; a ruled-out answer takes ~nothing",
